@@ -122,26 +122,32 @@ async function loginToLinkedIn(page) {
   try {
     log('Iniciando sesión en LinkedIn...');
     
+    // 🆕 Aumentar timeout a 60 segundos
     await page.goto('https://www.linkedin.com/login', {
       waitUntil: 'networkidle2',
-      timeout: 30000
+      timeout: 60000  // ← Era 30000
     });
     
     await delay(CONFIG.DELAY_BETWEEN_ACTIONS);
     
     // Ingresar email
+    await page.waitForSelector('#username', { timeout: 10000 });
     await page.type('#username', CONFIG.LINKEDIN_EMAIL, { delay: 100 });
     await delay(1000);
     
     // Ingresar password
+    await page.waitForSelector('#password', { timeout: 10000 });
     await page.type('#password', CONFIG.LINKEDIN_PASSWORD, { delay: 100 });
     await delay(1000);
     
     // Click en login
     await page.click('button[type="submit"]');
     
-    // Esperar a que cargue el feed
-    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+    // 🆕 Aumentar timeout a 60 segundos
+    await page.waitForNavigation({ 
+      waitUntil: 'networkidle2', 
+      timeout: 60000  // ← Era 30000
+    });
     
     log('Login exitoso', 'success');
     return true;
