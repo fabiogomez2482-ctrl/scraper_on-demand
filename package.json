@@ -1,27 +1,15 @@
-{
+﻿{
   "name": "linkedin-scraper",
   "version": "1.0.0",
-  "description": "LinkedIn profile posts scraper with Airtable integration",
+  "description": "LinkedIn profile posts scraper",
   "main": "linkedin-scraper.js",
   "scripts": {
-    "start": "node linkedin-scraper.js",
-    "dev": "nodemon linkedin-scraper.js"
+    "start": "node linkedin-scraper.js"
   },
-  "keywords": [
-    "linkedin",
-    "scraper",
-    "puppeteer",
-    "airtable"
-  ],
-  "author": "",
-  "license": "MIT",
   "dependencies": {
     "puppeteer": "^21.6.1",
     "airtable": "^0.12.2",
     "node-cron": "^3.0.3"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.2"
   },
   "engines": {
     "node": ">=18.0.0"

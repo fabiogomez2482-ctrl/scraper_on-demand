@@ -1,4 +1,4 @@
-// linkedin-scraper.js
+﻿// linkedin-scraper.js
 const puppeteer = require('puppeteer');
 const Airtable = require('airtable');
 const cron = require('node-cron');
