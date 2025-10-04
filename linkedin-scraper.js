@@ -122,37 +122,80 @@ async function loginToLinkedIn(page) {
   try {
     log('Iniciando sesión en LinkedIn...');
     
-    // 🆕 Aumentar timeout a 60 segundos
+    // Ir a la página de login
     await page.goto('https://www.linkedin.com/login', {
-      waitUntil: 'networkidle2',
-      timeout: 60000  // ← Era 30000
+      waitUntil: 'domcontentloaded',
+      timeout: 60000
     });
     
-    await delay(CONFIG.DELAY_BETWEEN_ACTIONS);
+    log('Página de login cargada');
+    await delay(3000);
     
-    // Ingresar email
+    // Verificar si estamos en la página de login
+    const isLoginPage = await page.evaluate(() => {
+      return document.querySelector('#username') !== null;
+    });
+    
+    if (!isLoginPage) {
+      log('No se encontró el formulario de login');
+      return false;
+    }
+    
+    log('Formulario de login encontrado');
+    
+    // Ingresar credenciales lentamente (parecer más humano)
     await page.waitForSelector('#username', { timeout: 10000 });
-    await page.type('#username', CONFIG.LINKEDIN_EMAIL, { delay: 100 });
+    await page.click('#username');
+    await delay(500);
+    await page.type('#username', CONFIG.LINKEDIN_EMAIL, { delay: 150 });
+    
     await delay(1000);
     
-    // Ingresar password
-    await page.waitForSelector('#password', { timeout: 10000 });
-    await page.type('#password', CONFIG.LINKEDIN_PASSWORD, { delay: 100 });
+    await page.click('#password');
+    await delay(500);
+    await page.type('#password', CONFIG.LINKEDIN_PASSWORD, { delay: 150 });
+    
     await delay(1000);
     
-    // Click en login
-    await page.click('button[type="submit"]');
+    log('Credenciales ingresadas, haciendo click en login...');
     
-    // 🆕 Aumentar timeout a 60 segundos
-    await page.waitForNavigation({ 
-      waitUntil: 'networkidle2', 
-      timeout: 60000  // ← Era 30000
-    });
+    // Click en submit
+    await Promise.all([
+      page.waitForNavigation({ 
+        waitUntil: 'domcontentloaded', 
+        timeout: 60000 
+      }),
+      page.click('button[type="submit"]')
+    ]);
     
-    log('Login exitoso', 'success');
-    return true;
+    await delay(5000);
+    
+    // Verificar si el login fue exitoso
+    const currentUrl = page.url();
+    log(`URL después de login: ${currentUrl}`);
+    
+    if (currentUrl.includes('/feed') || currentUrl.includes('/mynetwork')) {
+      log('Login exitoso', 'success');
+      return true;
+    } else if (currentUrl.includes('/checkpoint/challenge')) {
+      log('LinkedIn requiere verificación de seguridad (captcha)', 'error');
+      return false;
+    } else {
+      log('Login falló - URL inesperada', 'error');
+      return false;
+    }
+    
   } catch (error) {
     log(`Error en login: ${error.message}`, 'error');
+    
+    // Tomar screenshot para debug
+    try {
+      await page.screenshot({ path: '/tmp/login-error.png' });
+      log('Screenshot del error guardado');
+    } catch (e) {
+      // Ignorar si falla el screenshot
+    }
+    
     return false;
   }
 }
