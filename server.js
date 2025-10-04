@@ -90,10 +90,40 @@ async function loadCookies(page) {
       return false;
     }
     
-    const cookies = JSON.parse(process.env.LINKEDIN_COOKIES);
-    await page.goto('https://www.linkedin.com', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    let cookies = process.env.LINKEDIN_COOKIES;
+    
+    // Si es string, parsear a JSON
+    if (typeof cookies === 'string') {
+      cookies = JSON.parse(cookies);
+    }
+    
+    if (!Array.isArray(cookies) || cookies.length === 0) {
+      return false;
+    }
+    
+    // Limpiar comillas extras de los valores
+    cookies = cookies.map(cookie => {
+      const cleaned = { ...cookie };
+      if (typeof cleaned.value === 'string') {
+        cleaned.value = cleaned.value.replace(/^"|"$/g, '');
+      }
+      return cleaned;
+    });
+    
+    await page.goto('https://www.linkedin.com', { 
+      waitUntil: 'domcontentloaded', 
+      timeout: 30000 
+    });
     await delay(2000);
+    
+    // Limpiar cookies existentes
+    const existing = await page.cookies();
+    if (existing.length > 0) {
+      await page.deleteCookie(...existing);
+    }
+    
     await page.setCookie(...cookies);
+    
     return true;
   } catch (error) {
     log(`Error cargando cookies: ${error.message}`, 'error');
