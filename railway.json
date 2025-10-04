@@ -1,9 +1,0 @@
-﻿{
-  "build": {
-    "builder": "NIXPACKS"
-  },
-  "deploy": {
-    "startCommand": "node linkedin-scraper.js",
-    "restartPolicyType": "ON_FAILURE"
-  }
-}
