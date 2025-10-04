@@ -142,7 +142,6 @@ async function loadCookies(page) {
 // FUNCIONES DE SCRAPING
 // ========================================
 
-// Login a LinkedIn
 async function loginToLinkedIn(page) {
   try {
     log('Iniciando sesión en LinkedIn...');
@@ -151,7 +150,9 @@ async function loginToLinkedIn(page) {
     const cookiesLoaded = await loadCookies(page);
     
     if (cookiesLoaded) {
-      // Ir directamente al feed
+      log('Intentando login con cookies...');
+      
+      // Ir al feed
       await page.goto('https://www.linkedin.com/feed/', {
         waitUntil: 'domcontentloaded',
         timeout: 30000
@@ -160,27 +161,26 @@ async function loginToLinkedIn(page) {
       await delay(3000);
       
       const currentUrl = page.url();
-      if (currentUrl.includes('/feed')) {
+      log(`URL actual: ${currentUrl}`);
+      
+      if (currentUrl.includes('/feed') || currentUrl.includes('/mynetwork')) {
         log('Login con cookies exitoso', 'success');
         return true;
+      } else {
+        log('Cookies no válidas, intentando login tradicional...');
       }
     }
     
-    // Si las cookies no funcionaron, login normal
-    log('Cookies no válidas, haciendo login normal...');
+    // Si las cookies no funcionaron, login tradicional
+    log('Página de login cargada');
     
-    log('Iniciando sesión en LinkedIn...');
-    
-    // Ir a la página de login
     await page.goto('https://www.linkedin.com/login', {
       waitUntil: 'domcontentloaded',
       timeout: 60000
     });
     
-    log('Página de login cargada');
     await delay(3000);
     
-    // Verificar si estamos en la página de login
     const isLoginPage = await page.evaluate(() => {
       return document.querySelector('#username') !== null;
     });
@@ -192,7 +192,6 @@ async function loginToLinkedIn(page) {
     
     log('Formulario de login encontrado');
     
-    // Ingresar credenciales lentamente (parecer más humano)
     await page.waitForSelector('#username', { timeout: 10000 });
     await page.click('#username');
     await delay(500);
@@ -208,7 +207,6 @@ async function loginToLinkedIn(page) {
     
     log('Credenciales ingresadas, haciendo click en login...');
     
-    // Click en submit
     await Promise.all([
       page.waitForNavigation({ 
         waitUntil: 'domcontentloaded', 
@@ -219,7 +217,6 @@ async function loginToLinkedIn(page) {
     
     await delay(5000);
     
-    // Verificar si el login fue exitoso
     const currentUrl = page.url();
     log(`URL después de login: ${currentUrl}`);
     
@@ -236,15 +233,6 @@ async function loginToLinkedIn(page) {
     
   } catch (error) {
     log(`Error en login: ${error.message}`, 'error');
-    
-    // Tomar screenshot para debug
-    try {
-      await page.screenshot({ path: '/tmp/login-error.png' });
-      log('Screenshot del error guardado');
-    } catch (e) {
-      // Ignorar si falla el screenshot
-    }
-    
     return false;
   }
 }
