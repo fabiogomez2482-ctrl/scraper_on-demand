@@ -237,12 +237,11 @@ async function loginToLinkedIn(page) {
   }
 }
 
-// Extraer posts de un perfil
 async function scrapeProfilePosts(page, profileUrl, authorName, group) {
   try {
     log(`Extrayendo posts de: ${authorName}`);
     
-    // Ir al perfil y a la sección de actividad
+    // Ir directamente a la actividad reciente
     const activityUrl = `${profileUrl}/recent-activity/all/`;
     await page.goto(activityUrl, {
       waitUntil: 'networkidle2',
@@ -252,41 +251,93 @@ async function scrapeProfilePosts(page, profileUrl, authorName, group) {
     await delay(CONFIG.DELAY_BETWEEN_ACTIONS);
     
     // Scroll para cargar posts
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 5; i++) {
       await page.evaluate(() => window.scrollBy(0, window.innerHeight));
       await delay(2000);
     }
     
-    // Extraer posts
+    // Extraer posts con selectores actualizados
     const posts = await page.evaluate((maxPosts) => {
-      const postElements = document.querySelectorAll('.feed-shared-update-v2');
       const results = [];
+      
+      // Intentar múltiples selectores (LinkedIn cambia frecuentemente)
+      const selectors = [
+        'div.feed-shared-update-v2',
+        'li.profile-creator-shared-feed-update__container',
+        'div[data-urn]',
+        'article',
+        '.occludable-update'
+      ];
+      
+      let postElements = [];
+      for (const selector of selectors) {
+        postElements = document.querySelectorAll(selector);
+        if (postElements.length > 0) {
+          console.log(`Encontrados ${postElements.length} elementos con selector: ${selector}`);
+          break;
+        }
+      }
+      
+      if (postElements.length === 0) {
+        console.log('No se encontraron posts con ningún selector');
+        return [];
+      }
       
       for (let i = 0; i < Math.min(postElements.length, maxPosts); i++) {
         const post = postElements[i];
         
         try {
-          // Contenido
-          const contentElement = post.querySelector('.feed-shared-update-v2__description');
-          const content = contentElement ? contentElement.innerText.trim() : '';
+          // Buscar contenido de texto
+          const contentSelectors = [
+            '.feed-shared-update-v2__description',
+            '.update-components-text',
+            '.feed-shared-inline-show-more-text',
+            'span[dir="ltr"]'
+          ];
           
-          // Fecha
-          const timeElement = post.querySelector('.feed-shared-actor__sub-description time');
-          const date = timeElement ? timeElement.getAttribute('datetime') : '';
+          let content = '';
+          for (const sel of contentSelectors) {
+            const el = post.querySelector(sel);
+            if (el && el.innerText) {
+              content = el.innerText.trim();
+              break;
+            }
+          }
           
-          // URL del post
-          const linkElement = post.querySelector('.feed-shared-control-menu__trigger');
-          const postUrl = linkElement ? linkElement.closest('article').querySelector('a[href*="/posts/"]')?.href : '';
+          // Buscar fecha
+          const timeElement = post.querySelector('time') || post.querySelector('[datetime]');
+          const date = timeElement ? (timeElement.getAttribute('datetime') || timeElement.innerText) : new Date().toISOString();
           
-          // Métricas
-          const likesElement = post.querySelector('.social-details-social-counts__reactions-count');
-          const likes = likesElement ? parseInt(likesElement.innerText.replace(/\D/g, '')) || 0 : 0;
+          // Buscar URL del post
+          let postUrl = '';
+          const linkElement = post.querySelector('a[href*="/posts/"]') || 
+                             post.querySelector('a[href*="activity"]');
+          if (linkElement) {
+            postUrl = linkElement.href;
+          } else {
+            // Generar URL desde data-urn si existe
+            const urn = post.getAttribute('data-urn');
+            if (urn) {
+              postUrl = `https://www.linkedin.com/feed/update/${urn}`;
+            }
+          }
           
-          const commentsElement = post.querySelector('.social-details-social-counts__comments');
-          const comments = commentsElement ? parseInt(commentsElement.innerText.replace(/\D/g, '')) || 0 : 0;
+          // Buscar métricas
+          const socialCounts = post.querySelector('.social-details-social-counts');
+          let likes = 0;
+          let comments = 0;
           
-          // Media
-          const imageElement = post.querySelector('.feed-shared-image__image-link img');
+          if (socialCounts) {
+            const likesText = socialCounts.innerText;
+            const likesMatch = likesText.match(/(\d+[\d,\.]*)/);
+            if (likesMatch) {
+              likes = parseInt(likesMatch[1].replace(/[,\.]/g, ''));
+            }
+          }
+          
+          // Buscar media
+          const imageElement = post.querySelector('img[src*="media"]') ||
+                              post.querySelector('.update-components-image img');
           const videoElement = post.querySelector('video');
           const hasMedia = !!(imageElement || videoElement);
           const mediaUrl = imageElement ? imageElement.src : (videoElement ? videoElement.poster : '');
@@ -298,13 +349,13 @@ async function scrapeProfilePosts(page, profileUrl, authorName, group) {
               postUrl,
               likes,
               comments,
-              shares: 0, // LinkedIn no muestra shares directamente
+              shares: 0,
               hasMedia,
               mediaUrl
             });
           }
         } catch (err) {
-          console.error('Error extrayendo post individual:', err);
+          console.error('Error extrayendo post individual:', err.message);
         }
       }
       
