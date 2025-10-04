@@ -1,18 +1,18 @@
 {
-  "name": "linkedin-scraper",
+  "name": "scraper_on-demand",
   "version": "1.0.0",
   "description": "LinkedIn post scraper con Airtable",
-  "main": "linkedin-scraper.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node linkedin-scraper.js"
+    "start": "node server.js"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "dependencies": {
     "puppeteer": "^24.0.0",
-    "node-cron": "^3.0.2",
     "airtable": "^0.12.2",
+    "express": "^4.18.2",
     "dotenv": "^16.3.1"
   }
 }
