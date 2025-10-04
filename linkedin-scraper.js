@@ -113,15 +113,22 @@ async function savePost(postData) {
   }
 }
 
-// Cargar cookies desde variable de entorno
+// Cargar cookies
 async function loadCookies(page) {
   try {
     if (!process.env.LINKEDIN_COOKIES) {
-      log('No hay cookies configuradas, intentando login normal');
+      log('No hay cookies configuradas');
       return false;
     }
     
     const cookies = JSON.parse(process.env.LINKEDIN_COOKIES);
+    
+    // Ir a LinkedIn primero para establecer el dominio
+    await page.goto('https://www.linkedin.com', {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000
+    });
+    
     await page.setCookie(...cookies);
     log('Cookies cargadas exitosamente');
     return true;
