@@ -113,6 +113,24 @@ async function savePost(postData) {
   }
 }
 
+// Cargar cookies desde variable de entorno
+async function loadCookies(page) {
+  try {
+    if (!process.env.LINKEDIN_COOKIES) {
+      log('No hay cookies configuradas, intentando login normal');
+      return false;
+    }
+    
+    const cookies = JSON.parse(process.env.LINKEDIN_COOKIES);
+    await page.setCookie(...cookies);
+    log('Cookies cargadas exitosamente');
+    return true;
+  } catch (error) {
+    log(`Error cargando cookies: ${error.message}`, 'error');
+    return false;
+  }
+}
+
 // ========================================
 // FUNCIONES DE SCRAPING
 // ========================================
@@ -120,6 +138,30 @@ async function savePost(postData) {
 // Login a LinkedIn
 async function loginToLinkedIn(page) {
   try {
+    log('Iniciando sesión en LinkedIn...');
+    
+    // Intentar con cookies primero
+    const cookiesLoaded = await loadCookies(page);
+    
+    if (cookiesLoaded) {
+      // Ir directamente al feed
+      await page.goto('https://www.linkedin.com/feed/', {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000
+      });
+      
+      await delay(3000);
+      
+      const currentUrl = page.url();
+      if (currentUrl.includes('/feed')) {
+        log('Login con cookies exitoso', 'success');
+        return true;
+      }
+    }
+    
+    // Si las cookies no funcionaron, login normal
+    log('Cookies no válidas, haciendo login normal...');
+    
     log('Iniciando sesión en LinkedIn...');
     
     // Ir a la página de login
