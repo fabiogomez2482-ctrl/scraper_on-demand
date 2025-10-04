@@ -191,8 +191,8 @@ async function savePost(postData) {
         'Comments': postData.comments || 0,
         'Shares': postData.shares || 0,
         'Has Media': postData.hasMedia || false,
-        'Media URL': postData.mediaUrl || '',
-        'Status': 'New'
+        'Media URL': postData.mediaUrl || ''
+        // Status removido temporalmente para evitar error
       }
     }]);
     return true;
