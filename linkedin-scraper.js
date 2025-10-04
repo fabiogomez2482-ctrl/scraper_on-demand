@@ -17,9 +17,10 @@ const CONFIG = {
   
   // Scraping Config
   MAX_POSTS_PER_PROFILE: 10,
-  DELAY_BETWEEN_PROFILES: 60000, // 60 segundos
-  DELAY_BETWEEN_ACTIONS: 2000, // 2 segundos
-  PAGE_TIMEOUT: 60000, // Aumentado a 60 segundos
+  DELAY_BETWEEN_PROFILES: 60000,
+  DELAY_BETWEEN_ACTIONS: 2000,
+  PAGE_TIMEOUT: 90000, // 90 segundos
+  MAX_RETRIES: 3,
   
   // Cron Schedule (cada 6 horas)
   CRON_SCHEDULE: '0 */6 * * *',
@@ -37,7 +38,7 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const log = (message, type = 'info') => {
   const timestamp = new Date().toISOString();
-  const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
+  const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : type === 'warning' ? '⚠️' : 'ℹ️';
   console.log(`${prefix} [${timestamp}] ${message}`);
 };
 
@@ -103,7 +104,7 @@ async function savePost(postData) {
         }
       }
     ]);
-    log(`Post guardado: ${postData.authorName} - ${postData.postUrl}`, 'success');
+    log(`Post guardado: ${postData.authorName}`, 'success');
     return true;
   } catch (error) {
     log(`Error guardando post: ${error.message}`, 'error');
@@ -112,136 +113,42 @@ async function savePost(postData) {
 }
 
 // ========================================
-// FUNCIONES DE SCRAPING
+// FUNCIONES DE NAVEGACIÓN ROBUSTAS
 // ========================================
 
-async function loginToLinkedIn(page) {
-  try {
-    log('Iniciando sesión en LinkedIn...');
-    
-    // Intentar con cookies primero
-    const cookiesLoaded = await loadCookies(page);
-    
-    if (cookiesLoaded) {
-      log('Intentando login con cookies...');
+async function safeGoto(page, url, options = {}) {
+  const defaultOptions = {
+    waitUntil: 'domcontentloaded',
+    timeout: CONFIG.PAGE_TIMEOUT
+  };
+  
+  const mergedOptions = { ...defaultOptions, ...options };
+  
+  for (let i = 0; i < CONFIG.MAX_RETRIES; i++) {
+    try {
+      log(`Navegando a: ${url} (intento ${i + 1}/${CONFIG.MAX_RETRIES})`);
       
-      try {
-        // Ir al feed con timeout más largo y estrategia diferente
-        await page.goto('https://www.linkedin.com/feed/', {
-          waitUntil: 'domcontentloaded', // Cambiado de networkidle2
-          timeout: CONFIG.PAGE_TIMEOUT
-        });
-        
-        await delay(5000); // Esperar más tiempo
-        
-        const currentUrl = page.url();
-        log(`URL actual: ${currentUrl}`);
-        
-        // Verificar si estamos logueados
-        const isLoggedIn = await page.evaluate(() => {
-          // Buscar elementos que solo aparecen cuando estás logueado
-          return document.querySelector('nav.global-nav') !== null ||
-                 document.querySelector('[data-control-name="nav.settings"]') !== null ||
-                 document.querySelector('.feed-shared-update-v2') !== null;
-        });
-        
-        if (isLoggedIn && (currentUrl.includes('/feed') || currentUrl.includes('/mynetwork'))) {
-          log('Login con cookies exitoso', 'success');
-          return true;
-        } else {
-          log('Cookies no válidas o sesión expirada, intentando login tradicional...');
-        }
-      } catch (error) {
-        log(`Error con cookies: ${error.message}. Intentando login tradicional...`);
-      }
-    }
-    
-    // Si las cookies no funcionaron, login tradicional
-    log('Intentando login tradicional...');
-    
-    await page.goto('https://www.linkedin.com/login', {
-      waitUntil: 'domcontentloaded',
-      timeout: CONFIG.PAGE_TIMEOUT
-    });
-    
-    await delay(3000);
-    
-    // Verificar que estamos en la página de login
-    const isLoginPage = await page.evaluate(() => {
-      return document.querySelector('#username') !== null;
-    });
-    
-    if (!isLoginPage) {
-      log('No se encontró el formulario de login - posiblemente ya estamos logueados');
-      const currentUrl = page.url();
-      if (currentUrl.includes('/feed') || currentUrl.includes('/mynetwork')) {
+      const response = await page.goto(url, mergedOptions);
+      
+      if (response && response.ok()) {
+        log(`✓ Página cargada exitosamente`);
         return true;
       }
-      return false;
+      
+      log(`Respuesta no OK: ${response ? response.status() : 'null'}`, 'warning');
+      
+    } catch (error) {
+      log(`Error en intento ${i + 1}: ${error.message}`, 'warning');
+      
+      if (i < CONFIG.MAX_RETRIES - 1) {
+        const waitTime = (i + 1) * 5000;
+        log(`Esperando ${waitTime/1000}s antes de reintentar...`);
+        await delay(waitTime);
+      }
     }
-    
-    log('Formulario de login encontrado, ingresando credenciales...');
-    
-    // Ingresar credenciales con mayor delay
-    await page.waitForSelector('#username', { timeout: 10000 });
-    await page.click('#username');
-    await delay(1000);
-    await page.type('#username', CONFIG.LINKEDIN_EMAIL, { delay: 100 });
-    
-    await delay(1500);
-    
-    await page.click('#password');
-    await delay(1000);
-    await page.type('#password', CONFIG.LINKEDIN_PASSWORD, { delay: 100 });
-    
-    await delay(2000);
-    
-    log('Credenciales ingresadas, enviando formulario...');
-    
-    // Click en submit y esperar navegación
-    await Promise.all([
-      page.waitForNavigation({ 
-        waitUntil: 'domcontentloaded',
-        timeout: CONFIG.PAGE_TIMEOUT 
-      }).catch(err => log(`Advertencia en navegación: ${err.message}`)),
-      page.click('button[type="submit"]')
-    ]);
-    
-    await delay(5000);
-    
-    const finalUrl = page.url();
-    log(`URL después de login: ${finalUrl}`);
-    
-    // Verificar diferentes escenarios
-    if (finalUrl.includes('/feed') || finalUrl.includes('/mynetwork')) {
-      log('Login exitoso', 'success');
-      
-      // Guardar cookies para futuros usos
-      await saveCookies(page);
-      
-      return true;
-    } else if (finalUrl.includes('/checkpoint/challenge')) {
-      log('LinkedIn requiere verificación de seguridad (captcha/2FA)', 'error');
-      log('Por favor, inicia sesión manualmente en LinkedIn y exporta las cookies', 'error');
-      return false;
-    } else if (finalUrl.includes('/login')) {
-      log('Login falló - posiblemente credenciales incorrectas', 'error');
-      return false;
-    } else {
-      log(`Login incierto - URL inesperada: ${finalUrl}`, 'error');
-      
-      // Intentar verificar si estamos logueados de todas formas
-      const isLoggedIn = await page.evaluate(() => {
-        return document.querySelector('nav.global-nav') !== null;
-      });
-      
-      return isLoggedIn;
-    }
-    
-  } catch (error) {
-    log(`Error en login: ${error.message}`, 'error');
-    return false;
   }
+  
+  return false;
 }
 
 async function loadCookies(page) {
@@ -253,74 +160,295 @@ async function loadCookies(page) {
     
     const cookies = JSON.parse(process.env.LINKEDIN_COOKIES);
     
-    // Validar que las cookies tengan el formato correcto
     if (!Array.isArray(cookies) || cookies.length === 0) {
-      log('Formato de cookies inválido');
+      log('Formato de cookies inválido', 'error');
       return false;
     }
     
-    // Ir a LinkedIn primero para establecer el dominio
-    await page.goto('https://www.linkedin.com', {
+    log(`Cargando ${cookies.length} cookies...`);
+    
+    // Ir a LinkedIn primero
+    const loaded = await safeGoto(page, 'https://www.linkedin.com', {
       waitUntil: 'domcontentloaded',
-      timeout: CONFIG.PAGE_TIMEOUT
+      timeout: 30000
     });
     
+    if (!loaded) {
+      log('No se pudo cargar LinkedIn para establecer cookies', 'error');
+      return false;
+    }
+    
+    await delay(2000);
+    
+    // Limpiar cookies existentes
+    const existingCookies = await page.cookies();
+    if (existingCookies.length > 0) {
+      await page.deleteCookie(...existingCookies);
+    }
+    
+    // Establecer nuevas cookies
     await page.setCookie(...cookies);
-    log('Cookies cargadas exitosamente');
+    
+    log('Cookies establecidas exitosamente', 'success');
     return true;
+    
   } catch (error) {
     log(`Error cargando cookies: ${error.message}`, 'error');
     return false;
   }
 }
 
-async function saveCookies(page) {
+async function checkIfLoggedIn(page) {
   try {
-    const cookies = await page.cookies();
-    log('💾 Cookies guardadas (cópialas para LINKEDIN_COOKIES):');
-    console.log(JSON.stringify(cookies, null, 2));
+    // Múltiples formas de verificar si estamos logueados
+    const checks = await page.evaluate(() => {
+      return {
+        hasGlobalNav: document.querySelector('nav.global-nav') !== null,
+        hasProfileIcon: document.querySelector('[data-control-name="nav.settings"]') !== null,
+        hasFeedContent: document.querySelector('.feed-shared-update-v2') !== null,
+        hasSearchBar: document.querySelector('input[placeholder*="Search"]') !== null,
+        hasMessaging: document.querySelector('[data-control-name="nav.messaging"]') !== null,
+        url: window.location.href,
+        bodyText: document.body.innerText.substring(0, 200)
+      };
+    });
+    
+    log(`Verificación de login: ${JSON.stringify(checks)}`);
+    
+    // Si tenemos al menos 2 de estos elementos, estamos logueados
+    const positiveChecks = [
+      checks.hasGlobalNav,
+      checks.hasProfileIcon,
+      checks.hasFeedContent,
+      checks.hasSearchBar,
+      checks.hasMessaging
+    ].filter(Boolean).length;
+    
+    const urlCheck = checks.url.includes('/feed') || 
+                    checks.url.includes('/mynetwork') ||
+                    checks.url.includes('/in/');
+    
+    const isLoggedIn = positiveChecks >= 2 || (positiveChecks >= 1 && urlCheck);
+    
+    log(`Checks positivos: ${positiveChecks}/5, URL válida: ${urlCheck}`);
+    
+    return isLoggedIn;
+    
   } catch (error) {
-    log(`Error guardando cookies: ${error.message}`, 'error');
+    log(`Error verificando login: ${error.message}`, 'error');
+    return false;
   }
 }
 
+// ========================================
+// FUNCIONES DE LOGIN
+// ========================================
+
+async function loginWithCookies(page) {
+  try {
+    log('🍪 Intentando login con cookies...');
+    
+    const cookiesLoaded = await loadCookies(page);
+    if (!cookiesLoaded) {
+      return false;
+    }
+    
+    // Navegar al feed
+    const navigated = await safeGoto(page, 'https://www.linkedin.com/feed/');
+    if (!navigated) {
+      log('No se pudo navegar al feed', 'warning');
+      return false;
+    }
+    
+    await delay(5000); // Esperar a que cargue
+    
+    // Verificar si estamos logueados
+    const isLoggedIn = await checkIfLoggedIn(page);
+    
+    if (isLoggedIn) {
+      log('✅ Login con cookies exitoso!', 'success');
+      return true;
+    }
+    
+    log('Cookies no válidas o expiradas', 'warning');
+    return false;
+    
+  } catch (error) {
+    log(`Error en login con cookies: ${error.message}`, 'error');
+    return false;
+  }
+}
+
+async function loginWithCredentials(page) {
+  try {
+    log('🔑 Intentando login con credenciales...');
+    
+    // Ir a página de login
+    const navigated = await safeGoto(page, 'https://www.linkedin.com/login');
+    if (!navigated) {
+      throw new Error('No se pudo cargar la página de login');
+    }
+    
+    await delay(3000);
+    
+    // Verificar si ya estamos logueados
+    const alreadyLoggedIn = await checkIfLoggedIn(page);
+    if (alreadyLoggedIn) {
+      log('Ya estábamos logueados!', 'success');
+      return true;
+    }
+    
+    // Buscar formulario de login
+    const hasLoginForm = await page.evaluate(() => {
+      return document.querySelector('#username') !== null;
+    });
+    
+    if (!hasLoginForm) {
+      log('No se encontró el formulario de login', 'warning');
+      return false;
+    }
+    
+    log('Formulario encontrado, ingresando credenciales...');
+    
+    // Ingresar email
+    await page.waitForSelector('#username', { timeout: 10000 });
+    await page.click('#username', { clickCount: 3 }); // Seleccionar todo
+    await delay(500);
+    await page.type('#username', CONFIG.LINKEDIN_EMAIL, { delay: 100 });
+    
+    await delay(1500);
+    
+    // Ingresar password
+    await page.click('#password', { clickCount: 3 });
+    await delay(500);
+    await page.type('#password', CONFIG.LINKEDIN_PASSWORD, { delay: 100 });
+    
+    await delay(2000);
+    
+    log('Enviando formulario...');
+    
+    // Click en submit
+    await page.click('button[type="submit"]');
+    
+    // Esperar navegación o cambio de URL
+    await Promise.race([
+      page.waitForNavigation({ 
+        waitUntil: 'domcontentloaded',
+        timeout: CONFIG.PAGE_TIMEOUT 
+      }).catch(() => null),
+      delay(10000)
+    ]);
+    
+    await delay(5000);
+    
+    const currentUrl = page.url();
+    log(`URL después de submit: ${currentUrl}`);
+    
+    // Verificar resultado
+    if (currentUrl.includes('/checkpoint/challenge')) {
+      log('❌ LinkedIn requiere verificación (2FA/Captcha)', 'error');
+      log('Recomendación: Desactiva 2FA o usa cookies de una sesión verificada', 'warning');
+      return false;
+    }
+    
+    if (currentUrl.includes('/login')) {
+      log('❌ Login falló - verifica credenciales', 'error');
+      return false;
+    }
+    
+    // Verificar si estamos logueados
+    const isLoggedIn = await checkIfLoggedIn(page);
+    
+    if (isLoggedIn) {
+      log('✅ Login con credenciales exitoso!', 'success');
+      
+      // Guardar cookies para futura referencia
+      const cookies = await page.cookies();
+      log('\n💾 NUEVAS COOKIES (Guárdalas en LINKEDIN_COOKIES):');
+      console.log(JSON.stringify(cookies, null, 2));
+      
+      return true;
+    }
+    
+    log('Estado de login incierto', 'warning');
+    return false;
+    
+  } catch (error) {
+    log(`Error en login con credenciales: ${error.message}`, 'error');
+    return false;
+  }
+}
+
+async function loginToLinkedIn(page) {
+  try {
+    log('🚀 Iniciando proceso de login...');
+    
+    // Estrategia 1: Cookies
+    if (process.env.LINKEDIN_COOKIES) {
+      const cookieSuccess = await loginWithCookies(page);
+      if (cookieSuccess) {
+        return true;
+      }
+    }
+    
+    // Estrategia 2: Credenciales
+    if (CONFIG.LINKEDIN_EMAIL && CONFIG.LINKEDIN_PASSWORD) {
+      const credentialSuccess = await loginWithCredentials(page);
+      if (credentialSuccess) {
+        return true;
+      }
+    }
+    
+    log('❌ Todas las estrategias de login fallaron', 'error');
+    return false;
+    
+  } catch (error) {
+    log(`❌ Error crítico en login: ${error.message}`, 'error');
+    return false;
+  }
+}
+
+// ========================================
+// FUNCIONES DE SCRAPING
+// ========================================
+
 async function scrapeProfilePosts(page, profileUrl, authorName, group) {
   try {
-    log(`Extrayendo posts de: ${authorName}`);
+    log(`📊 Extrayendo posts de: ${authorName}`);
     
-    // Ir directamente a la actividad reciente
     const activityUrl = `${profileUrl}/recent-activity/all/`;
     
-    await page.goto(activityUrl, {
-      waitUntil: 'domcontentloaded',
-      timeout: CONFIG.PAGE_TIMEOUT
-    });
+    const navigated = await safeGoto(page, activityUrl);
+    if (!navigated) {
+      log(`No se pudo cargar el perfil de ${authorName}`, 'error');
+      return 0;
+    }
     
     await delay(CONFIG.DELAY_BETWEEN_ACTIONS);
     
-    // Esperar a que se cargue contenido
+    // Esperar contenido
     try {
       await page.waitForSelector('div.feed-shared-update-v2, li.profile-creator-shared-feed-update__container, div[data-urn]', {
         timeout: 15000
       });
+      log('Contenido detectado');
     } catch (e) {
-      log('Advertencia: No se detectaron selectores de posts estándar, intentando de todas formas...');
+      log('Timeout esperando posts, intentando extraer de todas formas...', 'warning');
     }
     
-    // Scroll para cargar posts
-    log('Scrolleando para cargar posts...');
+    // Scroll
+    log('Scrolleando...');
     for (let i = 0; i < 5; i++) {
       await page.evaluate(() => window.scrollBy(0, window.innerHeight));
       await delay(2000);
     }
     
-    await delay(2000); // Esperar final del scroll
+    await delay(2000);
     
     // Extraer posts
     const posts = await page.evaluate((maxPosts) => {
       const results = [];
       
-      // Selectores múltiples para diferentes versiones de LinkedIn
       const selectors = [
         'div.feed-shared-update-v2',
         'li.profile-creator-shared-feed-update__container',
@@ -334,13 +462,13 @@ async function scrapeProfilePosts(page, profileUrl, authorName, group) {
       for (const selector of selectors) {
         postElements = document.querySelectorAll(selector);
         if (postElements.length > 0) {
-          console.log(`✓ Encontrados ${postElements.length} posts con selector: ${selector}`);
+          console.log(`✓ ${postElements.length} posts con: ${selector}`);
           break;
         }
       }
       
       if (postElements.length === 0) {
-        console.log('⚠️ No se encontraron posts con ningún selector');
+        console.log('⚠️ No se encontraron posts');
         return [];
       }
       
@@ -348,7 +476,6 @@ async function scrapeProfilePosts(page, profileUrl, authorName, group) {
         const post = postElements[i];
         
         try {
-          // Extraer contenido de texto
           const contentSelectors = [
             '.feed-shared-update-v2__description',
             '.update-components-text',
@@ -367,16 +494,11 @@ async function scrapeProfilePosts(page, profileUrl, authorName, group) {
             }
           }
           
-          // Si no hay contenido, saltar
-          if (!content) {
-            continue;
-          }
+          if (!content) continue;
           
-          // Extraer fecha
           const timeElement = post.querySelector('time') || post.querySelector('[datetime]');
           const date = timeElement ? (timeElement.getAttribute('datetime') || timeElement.innerText) : new Date().toISOString();
           
-          // Extraer URL del post
           let postUrl = '';
           const linkElement = post.querySelector('a[href*="/posts/"]') || 
                              post.querySelector('a[href*="activity"]') ||
@@ -385,19 +507,14 @@ async function scrapeProfilePosts(page, profileUrl, authorName, group) {
           if (linkElement) {
             postUrl = linkElement.href;
           } else {
-            // Generar URL desde data-urn
             const urn = post.getAttribute('data-urn') || post.getAttribute('data-id');
             if (urn) {
               postUrl = `https://www.linkedin.com/feed/update/${urn}`;
             }
           }
           
-          // Si no hay URL válida, saltar
-          if (!postUrl) {
-            continue;
-          }
+          if (!postUrl) continue;
           
-          // Extraer métricas de engagement
           let likes = 0;
           let comments = 0;
           
@@ -410,7 +527,6 @@ async function scrapeProfilePosts(page, profileUrl, authorName, group) {
             }
           }
           
-          // Buscar comentarios
           const commentButton = post.querySelector('[aria-label*="comment"]');
           if (commentButton) {
             const commentText = commentButton.innerText;
@@ -420,7 +536,6 @@ async function scrapeProfilePosts(page, profileUrl, authorName, group) {
             }
           }
           
-          // Detectar media
           const imageElement = post.querySelector('img[src*="media"]') ||
                               post.querySelector('.update-components-image img');
           const videoElement = post.querySelector('video');
@@ -439,16 +554,15 @@ async function scrapeProfilePosts(page, profileUrl, authorName, group) {
           });
           
         } catch (err) {
-          console.error('Error extrayendo post individual:', err.message);
+          console.error('Error extrayendo post:', err.message);
         }
       }
       
       return results;
     }, CONFIG.MAX_POSTS_PER_PROFILE);
     
-    log(`Encontrados ${posts.length} posts de ${authorName}`);
+    log(`Encontrados ${posts.length} posts`);
     
-    // Guardar posts en Airtable
     let newPostsCount = 0;
     for (const post of posts) {
       const exists = await postExists(post.postUrl);
@@ -471,15 +585,15 @@ async function scrapeProfilePosts(page, profileUrl, authorName, group) {
         const saved = await savePost(postData);
         if (saved) newPostsCount++;
         
-        await delay(500); // Delay entre guardados
+        await delay(500);
       }
     }
     
-    log(`Guardados ${newPostsCount} posts nuevos de ${authorName}`, 'success');
+    log(`✅ ${newPostsCount} posts nuevos guardados`, 'success');
     return newPostsCount;
     
   } catch (error) {
-    log(`Error scraping perfil ${authorName}: ${error.message}`, 'error');
+    log(`Error en scraping de ${authorName}: ${error.message}`, 'error');
     return 0;
   }
 }
@@ -493,17 +607,15 @@ async function runScraper() {
   let browser;
   
   try {
-    // Obtener perfiles activos
     const profiles = await getActiveProfiles();
     
     if (profiles.length === 0) {
-      log('No hay perfiles activos para monitorear');
+      log('No hay perfiles activos para monitorear', 'warning');
       return;
     }
     
-    log(`Perfiles a monitorear: ${profiles.length}`);
+    log(`📋 Perfiles a monitorear: ${profiles.length}`);
     
-    // Iniciar navegador
     browser = await puppeteer.launch({
       headless: true,
       args: [
@@ -513,31 +625,33 @@ async function runScraper() {
         '--disable-accelerated-2d-canvas',
         '--disable-gpu',
         '--window-size=1920x1080',
-        '--disable-blink-features=AutomationControlled'
+        '--disable-blink-features=AutomationControlled',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-web-security'
       ]
     });
     
     const page = await browser.newPage();
     
-    // Configurar viewport y user agent
     await page.setViewport({ width: 1920, height: 1080 });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
     
-    // Ocultar webdriver
     await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => false,
-      });
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
     });
     
-    // Login a LinkedIn
+    // Configurar timeouts más largos para requests
+    await page.setDefaultNavigationTimeout(CONFIG.PAGE_TIMEOUT);
+    await page.setDefaultTimeout(CONFIG.PAGE_TIMEOUT);
+    
     const loginSuccess = await loginToLinkedIn(page);
     
     if (!loginSuccess) {
       throw new Error('No se pudo iniciar sesión en LinkedIn');
     }
     
-    // Scraping de cada perfil
     let totalNewPosts = 0;
     
     for (const profile of profiles) {
@@ -551,27 +665,26 @@ async function runScraper() {
         
         totalNewPosts += newPosts;
         
-        // Delay entre perfiles para evitar rate limiting
         if (profiles.indexOf(profile) < profiles.length - 1) {
-          log(`Esperando ${CONFIG.DELAY_BETWEEN_PROFILES / 1000}s antes del siguiente perfil...`);
+          log(`⏳ Esperando ${CONFIG.DELAY_BETWEEN_PROFILES / 1000}s...`);
           await delay(CONFIG.DELAY_BETWEEN_PROFILES);
         }
         
       } catch (error) {
-        log(`Error procesando perfil ${profile.name}: ${error.message}`, 'error');
+        log(`Error en perfil ${profile.name}: ${error.message}`, 'error');
         continue;
       }
     }
     
-    log(`✅ Scraping completado. Total posts nuevos: ${totalNewPosts}`, 'success');
+    log(`✅ Scraping completado. Total: ${totalNewPosts} posts nuevos`, 'success');
     
   } catch (error) {
-    log(`❌ Error general: ${error.message}`, 'error');
+    log(`❌ Error crítico: ${error.message}`, 'error');
     console.error(error.stack);
   } finally {
     if (browser) {
       await browser.close();
-      log('Navegador cerrado');
+      log('🔒 Navegador cerrado');
     }
   }
 }
@@ -580,16 +693,13 @@ async function runScraper() {
 // EJECUCIÓN
 // ========================================
 
-// Ejecutar inmediatamente al iniciar
 log('📱 Aplicación iniciada');
 
-// Ejecutar con manejo de errores
 runScraper().catch(err => {
   log(`Error fatal: ${err.message}`, 'error');
   process.exit(1);
 });
 
-// Programar ejecución con cron
 cron.schedule(CONFIG.CRON_SCHEDULE, () => {
   log('⏰ Ejecutando tarea programada...');
   runScraper().catch(err => {
@@ -597,4 +707,4 @@ cron.schedule(CONFIG.CRON_SCHEDULE, () => {
   });
 });
 
-log(`⏱️ Cron programado: ${CONFIG.CRON_SCHEDULE} (cada 6 horas)`);
+log(`⏱️ Cron programado: ${CONFIG.CRON_SCHEDULE}`);
